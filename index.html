@@ -297,7 +297,7 @@ function parsePdfLinesToTxns(pages, prefix, fname) {
   var allText = pages.join("\n");
   var ys = allText.match(/20\d{2}/g);
   var year = ys ? parseInt(mostCommon(ys), 10) : (new Date()).getFullYear();
-  var skipRe = /(balance|sub-?total|\btotal\b|payment due|minimum|credit limit|available credit|statement date|opening|closing|brought forward|carried forward|previous balance|amount due|new charges|page\s*\d|grand total)/i;
+  var skipRe = /(balance|sub-?total|\btotal\b|payment due|min(\.|imum)?\s*payment|minimum|credit limit|available\s*(credit)?|statement date|opening|closing|brought forward|carried forward|previous balance|amount (due|payable)|new charges|page\s*\d|grand total|autopay|auto-pay|giro|due date|outstanding|please pay)/i;
   var idx = 0, out = [];
   pages.forEach(function (page) {
     page.split("\n").forEach(function (raw) {
@@ -327,6 +327,8 @@ function parsePdfLinesToTxns(pages, prefix, fname) {
       var credit = chosen.tag === "CR" || /\bCR\b/i.test(rest.slice(chosen.index));
       var desc = rest.slice(0, chosen.index).replace(/\s+/g, " ").trim();
       if (!desc) desc = rest.replace(/(\d[\d,]*\.\d{2})\s*(CR|DR)?/ig, "").replace(/\s+/g, " ").trim();
+      var letters = (desc.match(/[A-Za-z]/g) || []).length;
+      if (letters < 2) return; // no merchant name = a summary/limit/minimum-due line, not a purchase
       out.push({ id: prefix + (idx++), date: d, amount: credit ? -Math.abs(value) : Math.abs(value), isCredit: credit, desc: desc, source: fname });
     });
   });
