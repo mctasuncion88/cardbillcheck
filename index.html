@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reconcile — card bill vs. expenses</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root{
+    --paper:#F6F7F9;--card:#fff;--ink:#14181F;--sub:#5B6472;--faint:#8A93A2;--line:#E4E7EC;
+    --primary:#0E7C7B;--primaryDark:#0A6160;
+    --matchBg:#ECFDF5;--matchTx:#047857;--matchDot:#10B981;
+    --reviewBg:#FFFBEB;--reviewTx:#B45309;--reviewDot:#F59E0B;
+    --gapBg:#FEF2F2;--gapTx:#B91C1C;--gapDot:#EF4444;
+    --expBg:#F1F5F9;--expTx:#475569;--expDot:#64748B;
+    --creditBg:#ECFEFF;--creditTx:#0E7490;--creditDot:#06B6D4;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--paper);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.45}
+  .wrap{max-width:880px;margin:0 auto;padding:28px 20px 56px}
+  h1{font-size:26px;font-weight:700;letter-spacing:-.4px;margin:0}
+  .sub{color:var(--sub);font-size:14px;margin:4px 0 0}
+  .fig{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+  .hidden{display:none!important}
+  .muted{color:var(--faint)}
+
+  .uploads{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:22px}
+  .card{background:var(--card);border:1px dashed var(--line);border-radius:16px;padding:18px}
+  .card.drop.dragover{border-color:var(--primary);background:#fbfdfd}
+  .chead{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .ico{background:var(--paper);border-radius:10px;padding:8px;color:var(--primary);display:flex}
+  .ctitle{font-weight:600;font-size:14.5px}
+  .chint{color:var(--faint);font-size:12px}
+  .chip{background:var(--paper);border-radius:8px;padding:6px 10px;display:flex;align-items:center;gap:8px;margin:6px 0}
+  .chip-name{flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip-n{color:var(--faint);font-size:11px}
+  .chip-x{border:0;background:none;color:var(--faint);cursor:pointer;font-size:13px;padding:0 2px}
+  .status{color:var(--primary);font-size:12px;margin:6px 0;display:flex;align-items:center;gap:6px}
+  .pick{border:0;background:none;color:var(--primary);font-weight:600;font-size:13px;cursor:pointer;padding:6px 0 0;display:inline-flex;align-items:center;gap:6px}
+  .pick .or{color:var(--faint);font-weight:400}
+
+  details.preview{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:12px}
+  details.preview>summary{cursor:pointer;font-size:13px;color:var(--ink);font-weight:600;list-style:none}
+  details.preview>summary::-webkit-details-marker{display:none}
+  .ptable{margin-top:10px}
+  .prow{display:grid;grid-template-columns:130px 100px 34px 1fr 28px;gap:8px;align-items:center;padding:3px 0}
+  .prow.phead{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.6px}
+  .prow input[type=text],.prow input[type=number],.prow input[type=date]{border:1px solid var(--line);border-radius:7px;padding:5px 7px;font-size:12.5px;width:100%;font-family:inherit}
+  .prow input[type=checkbox]{width:16px;height:16px}
+
+  details.mapw{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:0;margin-top:14px}
+  details.mapw>summary{cursor:pointer;font-size:12.5px;color:var(--sub);padding:11px 14px;list-style:none}
+  details.mapw>summary::-webkit-details-marker{display:none}
+  .mapbody{padding:0 14px 12px}
+  .maprow{display:flex;gap:12px;align-items:flex-end;padding:6px 0}
+  .maprow .mlabel{width:130px;color:var(--sub);font-size:12.5px}
+  .maprow label{flex:1}
+  .maprow .mfield{color:var(--faint);font-size:10.5px;margin-bottom:2px;text-transform:capitalize}
+  .maprow select{width:100%;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px;background:var(--card);font-family:inherit}
+  .mapsep{height:1px;background:var(--line);margin:6px 0}
+
+  .error{background:var(--gapBg);color:var(--gapTx);border:1px solid var(--line);border-radius:12px;padding:11px 14px;margin-top:14px;font-size:13px}
+  .run{margin-top:18px;width:100%;border:0;border-radius:12px;padding:13px;font-weight:600;font-size:15px;color:#fff;background:var(--primary);cursor:pointer}
+  .run:hover{background:var(--primaryDark)}
+  .run:disabled{background:var(--line);color:var(--faint);cursor:not-allowed}
+
+  .coverage{color:var(--sub);font-size:12.5px;display:flex;flex-wrap:wrap;gap:6px 20px;margin:22px 0 12px}
+  .coverage b{color:var(--ink)}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:4px}
+  .stat.on{border-color:var(--ink)}
+  .stat .slab{display:flex;align-items:center;gap:8px;color:var(--sub);font-size:12.5px}
+  .stat .dot{width:8px;height:8px;border-radius:99px;display:inline-block}
+  .stat .snum{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:24px;font-weight:600}
+
+  .bar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  .ghost{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;color:var(--ink)}
+  .ghost.small{padding:5px 10px;font-size:12px;margin-top:8px}
+  .help{color:var(--faint);font-size:12px;margin:0 0 12px}
+
+  .list{display:flex;flex-direction:column;gap:10px}
+  .subhead{color:var(--sub);font-size:12px;font-weight:600;margin:8px 0 0;text-transform:uppercase;letter-spacing:.4px}
+
+  .pair{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .pair details>summary,.pairflat{list-style:none;display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:default}
+  .pair details>summary{cursor:pointer}
+  .pair details>summary::-webkit-details-marker{display:none}
+  .side{flex:1;min-width:0}
+  .slabel{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:1px}
+  .sfig{display:flex;align-items:baseline;gap:8px;margin-top:2px}
+  .sfig .fig{color:var(--ink)}
+  .sdate{color:var(--sub);font-family:var(--mono);font-size:12px}
+  .sdesc{font-size:13px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ssrc{color:var(--faint);font-size:10.5px;margin-top:1px}
+  .conn{font-family:var(--mono);font-size:18px;width:30px;text-align:center;flex:none}
+  .pair.match .conn{color:var(--matchDot)} .pair.review .conn{color:var(--reviewDot)}
+  .badge{border-radius:99px;padding:4px 10px;font-size:11.5px;font-weight:600;flex:none}
+  .badge.match{background:var(--matchBg);color:var(--matchTx)}
+  .badge.review{background:var(--reviewBg);color:var(--reviewTx)}
+  .badge.gap{background:var(--gapBg);color:var(--gapTx)}
+  .badge.exp{background:var(--expBg);color:var(--expTx)}
+  .badge.credit{background:var(--creditBg);color:var(--creditTx)}
+  .pdetail{background:var(--reviewBg);border-top:1px solid var(--line);color:var(--reviewTx);padding:11px 14px;font-size:13px}
+  .dflag{display:flex;gap:8px;margin-bottom:2px}
+  .dnote{opacity:.8;font-size:12px;margin-top:6px}
+
+  .single{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px}
+  .single .dot{width:8px;height:8px;border-radius:99px;flex:none}
+  .single.gap .dot{background:var(--gapDot)} .single.exp .dot{background:var(--expDot)} .single.credit .dot{background:var(--creditDot)}
+  .single .sbody{flex:1;min-width:0}
+
+  .footer{color:var(--faint);font-size:12px;text-align:center;margin-top:30px}
+  @media(max-width:680px){
+    .uploads{grid-template-columns:1fr}
+    .stats{grid-template-columns:1fr 1fr}
+    .prow{grid-template-columns:118px 84px 30px 1fr 24px;gap:6px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Reconcile</h1>
+    <p class="sub">Match your credit card bill against your expense tracker. Charges that aren’t accounted for get surfaced, and any match that needed a guess — a shifted date, an off amount, a credit — is flagged for you. Everything runs in your browser; nothing is uploaded.</p>
+  </header>
+
+  <div class="uploads">
+    <div class="card drop" id="expDrop" data-side="exp">
+      <div class="chead">
+        <span class="ico">▦</span>
+        <div><div class="ctitle">Expense tracker exports</div><div class="chint">One or more — add a file per month</div></div>
+      </div>
+      <div id="expList"></div>
+      <div id="expStatus"></div>
+      <button class="pick" id="expPick">＋ <span id="expPickLabel">Choose file</span> <span class="or">or drag in</span></button>
+      <input id="expInput" type="file" accept=".xlsx,.xls,.csv,.pdf" multiple style="display:none">
+    </div>
+
+    <div class="card drop" id="ccDrop" data-side="cc">
+      <div class="chead">
+        <span class="ico">▭</span>
+        <div><div class="ctitle">Credit card bill</div><div class="chint">PDF statement, or a CSV/Excel export</div></div>
+      </div>
+      <div id="ccList"></div>
+      <div id="ccStatus"></div>
+      <button class="pick" id="ccPick">＋ <span id="ccPickLabel">Choose file</span> <span class="or">or drag in</span></button>
+      <input id="ccInput" type="file" accept=".xlsx,.xls,.csv,.pdf" multiple style="display:none">
+    </div>
+  </div>
+
+  <div id="previews"></div>
+  <div id="mapWrap"></div>
+  <div id="error" class="error hidden"></div>
+
+  <button id="runBtn" class="run" disabled>Reconcile</button>
+
+  <section id="results" class="hidden">
+    <div id="coverage" class="coverage"></div>
+    <div id="stats" class="stats"></div>
+    <div class="bar"><button id="exportBtn" class="ghost">Export CSV</button></div>
+    <div id="help" class="help"></div>
+    <div id="list" class="list"></div>
+  </section>
+
+  <p class="footer">Runs entirely in your browser — your statements never leave your device.</p>
+</div>
+<script>
+/* ============================================================
+   Reconcile — core logic (no DOM). Works in browser + Node.
+   ============================================================ */
+
+function round2(n) { return Math.round(n * 100) / 100; }
+function normYear(y) { var n = parseInt(y, 10); if (n < 100) n += 2000; return n; }
+function dayDiff(a, b) { return Math.round((a - b) / 86400000); }
+function mostCommon(arr) {
+  var m = {}, best = null, bc = 0;
+  arr.forEach(function (x) { m[x] = (m[x] || 0) + 1; if (m[x] > bc) { bc = m[x]; best = x; } });
+  return best;
+}
+
+/* ----- amount (returns signed value + credit flag) ----- */
+function parseAmountInfo(v) {
+  if (v == null || v === "") return { value: null, credit: false };
+  if (typeof v === "number") return { value: v, credit: v < 0 };
+  var s = String(v).trim();
+  var paren = /^\(.*\)$/.test(s);
+  var cr = /\bcr\b/i.test(s);
+  var cleaned = s.replace(/\b(cr|dr)\b/ig, "").replace(/[()]/g, "").replace(/[^0-9.\-]/g, "");
+  if (cleaned === "" || cleaned === "-" || cleaned === ".") return { value: null, credit: (paren || cr) };
+  var n = parseFloat(cleaned);
+  if (isNaN(n)) return { value: null, credit: (paren || cr) };
+  var negative = n < 0 || paren || cr;
+  n = Math.abs(n);
+  return { value: negative ? -n : n, credit: negative };
+}
+
+/* ----- dates (Date object, Excel serial, or many string formats) ----- */
+function excelSerialToDate(n) { return new Date(Math.round((n - 25569) * 86400000)); }
+var MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+function parseDate(v) {
+  if (v == null || v === "") return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if (typeof v === "number") return (v > 20000 && v < 60000) ? excelSerialToDate(v) : null;
+  var s = String(v).trim(), m;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) { var d = new Date(+m[1], +m[2] - 1, +m[3]); return isNaN(d) ? null : d; }
+  if ((m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/))) {
+    var a = +m[1], b = +m[2], y = normYear(m[3]), day, mon;
+    if (a > 12) { day = a; mon = b; } else if (b > 12) { day = b; mon = a; } else { day = a; mon = b; } // SG: day-first
+    var d2 = new Date(y, mon - 1, day); return isNaN(d2) ? null : d2;
+  }
+  if ((m = s.match(/^(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?(?:\s+(\d{2,4}))?/))) {
+    var mo = MONTHS[m[2].toLowerCase()];
+    if (mo != null) { var y3 = m[3] ? normYear(m[3]) : (new Date()).getFullYear(); var d3 = new Date(y3, mo, +m[1]); return isNaN(d3) ? null : d3; }
+  }
+  if ((m = s.match(/^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})(?:,?\s+(\d{2,4}))?/))) {
+    var mo2 = MONTHS[m[1].toLowerCase()];
+    if (mo2 != null) { var y4 = m[3] ? normYear(m[3]) : (new Date()).getFullYear(); var d4 = new Date(y4, mo2, +m[2]); return isNaN(d4) ? null : d4; }
+  }
+  var dd = new Date(s); return isNaN(dd) ? null : dd;
+}
+
+function fmtDate(d) {
+  if (!d) return "—";
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+function fmtNum(n) {
+  if (n == null || isNaN(n)) return "—";
+  return (n < 0 ? "−" : "") + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/* ----- description similarity ----- */
+var STOP = { the:1,and:1,for:1,pte:1,ltd:1,inc:1,co:1,llc:1,sg:1,singapore:1,payment:1,purchase:1,pos:1,card:1,visa:1,mastercard:1,debit:1,credit:1,transaction:1,ref:1,sgd:1,usd:1,php:1 };
+function tokenize(s) {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(function (t) { return t.length > 2 && !STOP[t]; });
+}
+function tokenSim(a, b) {
+  var A = tokenize(a), B = tokenize(b);
+  if (!A.length || !B.length) return 0;
+  var setB = {}; B.forEach(function (t) { setB[t] = 1; });
+  var inter = 0, seen = {};
+  A.forEach(function (t) { if (setB[t] && !seen[t]) { inter++; seen[t] = 1; } });
+  var uni = {}; A.concat(B).forEach(function (t) { uni[t] = 1; });
+  var j = inter / Object.keys(uni).length;
+  var sa = String(a || "").toLowerCase(), sb = String(b || "").toLowerCase();
+  if (sa.length > 3 && sb.length > 3 && (sa.indexOf(sb) >= 0 || sb.indexOf(sa) >= 0)) j = Math.max(j, 0.6);
+  return j;
+}
+
+/* ----- column detection for spreadsheets ----- */
+function detectColumns(rows) {
+  if (!rows.length) return { date: "", amount: "", desc: "", keys: [] };
+  var keys = Object.keys(rows[0]).filter(function (k) { return k !== "__src"; });
+  var sample = rows.slice(0, 40);
+  var h = function (k) { return k.toLowerCase(); };
+  var frac = function (k, test) { var c = 0; sample.forEach(function (r) { if (test(r[k])) c++; }); return c / Math.max(1, sample.length); };
+  var dateF = {}, amtF = {}, txtLen = {};
+  keys.forEach(function (k) {
+    dateF[k] = frac(k, function (v) { return parseDate(v) != null; });
+    amtF[k] = frac(k, function (v) { return parseAmountInfo(v).value != null && parseDate(v) == null; });
+    var lens = []; sample.forEach(function (r) { var s = String(r[k] == null ? "" : r[k]); if (/[a-z]/i.test(s)) lens.push(s.length); });
+    txtLen[k] = lens.length ? lens.reduce(function (a, b) { return a + b; }, 0) / lens.length : 0;
+  });
+  var pick = function (scoreObj, words, min) {
+    var named = null;
+    keys.forEach(function (k) { if (!named && words.some(function (w) { return h(k).indexOf(w) >= 0; }) && scoreObj[k] >= min) named = k; });
+    if (named) return named;
+    var best = "", bestS = min;
+    keys.forEach(function (k) { if (scoreObj[k] > bestS) { bestS = scoreObj[k]; best = k; } });
+    return best;
+  };
+  var date = pick(dateF, ["date", "time", "posted"], 0.5);
+  var amtKeys = {}; keys.forEach(function (k) { if (k !== date) amtKeys[k] = amtF[k]; });
+  var amount = pick(amtKeys, ["amount", "amt", "price", "cost", "debit", "total", "value", "charge", "spent"], 0.5);
+  var desc = null;
+  keys.forEach(function (k) { if (!desc && ["desc", "note", "detail", "merchant", "name", "payee", "memo", "particular", "narrative", "transaction", "reference", "category"].some(function (w) { return h(k).indexOf(w) >= 0; })) desc = k; });
+  if (!desc) { var bL = 0; keys.forEach(function (k) { if (k !== date && k !== amount && txtLen[k] > bL) { bL = txtLen[k]; desc = k; } }); }
+  return { date: date, amount: amount, desc: desc || "", keys: keys };
+}
+
+function rowsToTxns(rows, map, prefix) {
+  var out = [];
+  rows.forEach(function (r, i) {
+    var date = parseDate(r[map.date]);
+    var ai = parseAmountInfo(r[map.amount]);
+    var desc = String(r[map.desc] == null ? "" : r[map.desc]).trim();
+    if (date == null && ai.value == null && !desc) return;
+    out.push({ id: prefix + i, date: date, amount: ai.value, isCredit: ai.credit, desc: desc, source: r.__src });
+  });
+  return out;
+}
+
+/* ----- PDF statement line parsing (heuristic) ----- */
+function parsePdfLinesToTxns(pages, prefix, fname) {
+  var allText = pages.join("\n");
+  var ys = allText.match(/20\d{2}/g);
+  var year = ys ? parseInt(mostCommon(ys), 10) : (new Date()).getFullYear();
+  var skipRe = /(balance|sub-?total|\btotal\b|payment due|minimum|credit limit|available credit|statement date|opening|closing|brought forward|carried forward|previous balance|amount due|new charges|page\s*\d|grand total)/i;
+  var idx = 0, out = [];
+  pages.forEach(function (page) {
+    page.split("\n").forEach(function (raw) {
+      var line = raw.trim(); if (!line) return;
+      var d = null, consumed = 0, m;
+      if ((m = line.match(/^(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?(?:\s+(\d{2,4}))?\b/))) {
+        var mo = MONTHS[m[2].toLowerCase()]; if (mo != null) { d = new Date(m[3] ? normYear(m[3]) : year, mo, +m[1]); consumed = m[0].length; }
+      } else if ((m = line.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/))) {
+        var a = +m[1], b = +m[2], y = normYear(m[3]), day, mon;
+        if (a > 12) { day = a; mon = b; } else if (b > 12) { day = b; mon = a; } else { day = a; mon = b; }
+        d = new Date(y, mon - 1, day); consumed = m[0].length;
+      } else if ((m = line.match(/^(\d{4})-(\d{2})-(\d{2})\b/))) {
+        d = new Date(+m[1], +m[2] - 1, +m[3]); consumed = m[0].length;
+      } else if ((m = line.match(/^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})(?:,?\s+(\d{2,4}))?\b/))) {
+        var mo2 = MONTHS[m[1].toLowerCase()]; if (mo2 != null) { d = new Date(m[3] ? normYear(m[3]) : year, mo2, +m[2]); consumed = m[0].length; }
+      }
+      if (!d || isNaN(d.getTime())) return;
+      if (skipRe.test(line)) return;
+      var rest = line.slice(consumed);
+      rest = rest.replace(/^\s*(\d{1,2}\s+[A-Za-z]{3}[a-z]*\.?|\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})\b/, "");
+      var amtRe = /(\d{1,3}(?:,\d{3})+\.\d{2}|\d+\.\d{2})\s*(CR|DR)?/ig;
+      var amts = [], mm;
+      while ((mm = amtRe.exec(rest))) { amts.push({ val: mm[1], tag: (mm[2] || "").toUpperCase(), index: mm.index }); }
+      if (!amts.length) return;
+      var chosen = amts[amts.length - 1];
+      var value = parseFloat(chosen.val.replace(/,/g, ""));
+      var credit = chosen.tag === "CR" || /\bCR\b/i.test(rest.slice(chosen.index));
+      var desc = rest.slice(0, chosen.index).replace(/\s+/g, " ").trim();
+      if (!desc) desc = rest.replace(/(\d[\d,]*\.\d{2})\s*(CR|DR)?/ig, "").replace(/\s+/g, " ").trim();
+      out.push({ id: prefix + (idx++), date: d, amount: credit ? -Math.abs(value) : Math.abs(value), isCredit: credit, desc: desc, source: fname });
+    });
+  });
+  return out;
+}
+
+/* ----- the matcher ----- */
+function reconcile(cc, exp) {
+  var pairs = [];
+  for (var i = 0; i < cc.length; i++) {
+    for (var j = 0; j < exp.length; j++) {
+      var a = cc[i], b = exp[j];
+      if (a.amount == null || b.amount == null) continue;
+      var aa = Math.abs(a.amount), bb = Math.abs(b.amount);
+      var amtDiff = Math.abs(aa - bb);
+      var rel = aa > 0 ? amtDiff / aa : 1;
+      var dd = (a.date && b.date) ? Math.abs(dayDiff(a.date, b.date)) : 999;
+      var sim = tokenSim(a.desc, b.desc);
+      var amountOk = amtDiff < 0.01 || amtDiff <= 0.5 || rel <= 0.02;
+      var dateOk = dd <= 5;
+      var descStrong = sim >= 0.5;
+      if (!(amountOk || descStrong)) continue;
+      if (!(dateOk || descStrong)) continue;
+      var score = 0;
+      if (amtDiff < 0.01) score += 55; else if (amtDiff <= 0.5) score += 40; else if (rel <= 0.02) score += 35; else score += 8;
+      if (dd === 0) score += 30; else if (dd <= 2) score += 22; else if (dd <= 5) score += 12; else score += 2;
+      score += sim * 20;
+      if (!!a.isCredit !== !!b.isCredit) score -= 15; // discourage a credit matching a normal expense
+      pairs.push({ i: i, j: j, score: score, dd: dd === 999 ? null : dd, amtDiff: amtDiff, sim: sim });
+    }
+  }
+  pairs.sort(function (x, y) { return y.score - x.score; });
+  var usedC = {}, usedE = {}, matched = [], flagged = [];
+  pairs.forEach(function (p) {
+    if (usedC[p.i] || usedE[p.j]) return;
+    usedC[p.i] = 1; usedE[p.j] = 1;
+    var a = cc[p.i], b = exp[p.j];
+    var flags = [];
+    if (p.dd != null && p.dd > 0) flags.push("Date off by " + p.dd + " day" + (p.dd > 1 ? "s" : ""));
+    if (p.dd == null) flags.push("One side has no date");
+    if (p.amtDiff >= 0.01) flags.push("Amount differs by " + fmtNum(p.amtDiff));
+    if (a.isCredit) flags.push("Card line is a credit (CR) — confirm it offsets this expense, not a duplicate charge");
+    var rec = { cc: a, exp: b, flags: flags, dd: p.dd, amtDiff: p.amtDiff, sim: p.sim };
+    (flags.length ? flagged : matched).push(rec);
+  });
+  var unmatchedCC = [], unmatchedExp = [];
+  for (var k = 0; k < cc.length; k++) if (!usedC[k]) unmatchedCC.push(cc[k]);
+  for (var q = 0; q < exp.length; q++) if (!usedE[q]) unmatchedExp.push(exp[q]);
+  return { matched: matched, flagged: flagged, unmatchedCC: unmatchedCC, unmatchedExp: unmatchedExp };
+}
+
+function buildCsv(results) {
+  var rows = [["status", "card_date", "card_amount", "card_cr", "card_desc", "expense_date", "expense_amount", "expense_desc", "notes"]];
+  function esc(v) { return '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"'; }
+  results.matched.forEach(function (r) { rows.push(["matched", fmtDate(r.cc.date), Math.abs(r.cc.amount || 0), r.cc.isCredit ? "CR" : "", r.cc.desc, fmtDate(r.exp.date), Math.abs(r.exp.amount || 0), r.exp.desc, ""]); });
+  results.flagged.forEach(function (r) { rows.push(["review", fmtDate(r.cc.date), Math.abs(r.cc.amount || 0), r.cc.isCredit ? "CR" : "", r.cc.desc, fmtDate(r.exp.date), Math.abs(r.exp.amount || 0), r.exp.desc, r.flags.join("; ")]); });
+  results.unmatchedCC.forEach(function (t) { rows.push([t.isCredit ? "credit (CR)" : "unaccounted", fmtDate(t.date), Math.abs(t.amount || 0), t.isCredit ? "CR" : "", t.desc, "", "", "", t.isCredit ? "credited to card, not a charge" : "on bill, no expense entry"]); });
+  results.unmatchedExp.forEach(function (t) { rows.push(["expense only", "", "", "", "", fmtDate(t.date), Math.abs(t.amount || 0), t.desc, "in expenses, no charge on bill"]); });
+  return rows.map(function (r) { return r.map(esc).join(","); }).join("\n");
+}
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { round2, normYear, dayDiff, parseAmountInfo, parseDate, fmtDate, fmtNum, tokenSim, detectColumns, rowsToTxns, parsePdfLinesToTxns, reconcile, buildCsv };
+}
+
+</script>
+<script>
+/* ============================================================
+   Reconcile — DOM + interaction (uses functions from logic.js)
+   ============================================================ */
+(function () {
+  if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  var state = { exp: [], cc: [], expMap: null, ccMap: null, results: null, filter: "gap", busy: false };
+  var el = function (id) { return document.getElementById(id); };
+  var uid = function () { return "f" + Math.random().toString(36).slice(2); };
+  function escHtml(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function escAttr(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+  function toInputDate(d) { if (!d) return ""; var m = ("0" + (d.getMonth() + 1)).slice(-2), da = ("0" + d.getDate()).slice(-2); return d.getFullYear() + "-" + m + "-" + da; }
+  function fromInputDate(s) { if (!s) return null; var p = s.split("-"); return new Date(+p[0], +p[1] - 1, +p[2]); }
+  function findFile(side, id) { var r = null; state[side].forEach(function (f) { if (f.id === id) r = f; }); return r; }
+
+  function showError(msg) { var e = el("error"); e.textContent = msg; e.classList.remove("hidden"); }
+  function hideError() { el("error").classList.add("hidden"); }
+  function setStatus(side, msg) {
+    var s = el(side + "Status");
+    s.innerHTML = msg ? '<div class="status"><span>◷</span> ' + escHtml(msg) + "</div>" : "";
+  }
+  function hideResults() { el("results").classList.add("hidden"); }
+  function updateRun() { el("runBtn").disabled = !(state.exp.length && state.cc.length) || state.busy; }
+
+  /* ---------- file intake ---------- */
+  async function extractPdfPages(file) {
+    if (!window.pdfjsLib) throw new Error("The PDF reader didn’t load — check your internet connection, then reload.");
+    var buf = await file.arrayBuffer();
+    var pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    var pages = [];
+    for (var p = 1; p <= pdf.numPages; p++) {
+      var page = await pdf.getPage(p);
+      var content = await page.getTextContent();
+      var lines = {};
+      content.items.forEach(function (it) {
+        if (!it.str || !it.str.trim()) return;
+        var y = Math.round(it.transform[5]);
+        (lines[y] = lines[y] || []).push(it);
+      });
+      var text = Object.keys(lines).sort(function (a, b) { return b - a; }).map(function (y) {
+        return lines[y].sort(function (a, b) { return a.transform[4] - b.transform[4]; }).map(function (it) { return it.str; }).join(" ");
+      }).join("\n");
+      pages.push(text);
+    }
+    return pages;
+  }
+
+  async function handleFiles(fileList, side) {
+    hideError(); state.busy = true; updateRun();
+    var arr = state[side];
+    var files = Array.prototype.slice.call(fileList);
+    for (var k = 0; k < files.length; k++) {
+      var f = files[k], isPdf = /\.pdf$/i.test(f.name);
+      try {
+        if (isPdf) {
+          setStatus(side, "Reading PDF…");
+          var pages = await extractPdfPages(f);
+          var joined = pages.join("").replace(/\s+/g, "");
+          if (joined.length < 30) { showError('“' + f.name + '” looks like a scanned PDF with no selectable text. Download a CSV or Excel statement from your bank instead.'); setStatus(side, ""); continue; }
+          setStatus(side, "Finding transactions…");
+          var txns = parsePdfLinesToTxns(pages, side + "_", f.name);
+          setStatus(side, "");
+          arr.push({ id: uid(), name: f.name, kind: "pdf", txns: txns });
+          if (!txns.length) showError('No transactions auto-detected in “' + f.name + '”. Use the editable list below to add them, or try a CSV/Excel export.');
+        } else {
+          var buf = await f.arrayBuffer();
+          var wb = XLSX.read(buf, { cellDates: true });
+          var ws = wb.Sheets[wb.SheetNames[0]];
+          var rows = XLSX.utils.sheet_to_json(ws, { defval: "" }).map(function (r) { r.__src = f.name; return r; });
+          if (!rows.length) { showError('“' + f.name + '” had no readable rows.'); continue; }
+          arr.push({ id: uid(), name: f.name, kind: "sheet", rows: rows });
+        }
+      } catch (e) { setStatus(side, ""); showError('Couldn’t read “' + f.name + '”. ' + (e && e.message ? e.message : "")); }
+    }
+    recomputeMap(side);
+    state.results = null; hideResults();
+    state.busy = false; renderAll();
+  }
+
+  function recomputeMap(side) {
+    var rows = []; state[side].forEach(function (f) { if (f.kind === "sheet") rows = rows.concat(f.rows); });
+    var key = side === "exp" ? "expMap" : "ccMap";
+    state[key] = rows.length ? detectColumns(rows) : null;
+  }
+
+  function collectTxns(side) {
+    var key = side === "exp" ? "expMap" : "ccMap", map = state[key], out = [];
+    state[side].forEach(function (f, fi) {
+      if (f.kind === "pdf") {
+        f.txns.forEach(function (t, ti) {
+          out.push({ id: side + "_p" + fi + "_" + ti, date: t.date, amount: t.amount, isCredit: t.isCredit, desc: t.desc, source: f.name });
+        });
+      } else if (map) {
+        rowsToTxns(f.rows, map, side + "_s" + fi + "_").forEach(function (t) { out.push(t); });
+      }
+    });
+    return out;
+  }
+
+  /* ---------- rendering: inputs ---------- */
+  function renderFileList(side) {
+    var box = el(side + "List"); box.innerHTML = "";
+    state[side].forEach(function (f) {
+      var n = f.kind === "pdf" ? f.txns.length + " txns" : f.rows.length + " rows";
+      var div = document.createElement("div"); div.className = "chip";
+      div.innerHTML = '<span class="chip-name"></span><span class="chip-n">' + n + '</span><button class="chip-x" data-action="remove" data-side="' + side + '" data-id="' + f.id + '">✕</button>';
+      div.querySelector(".chip-name").textContent = f.name;
+      box.appendChild(div);
+    });
+    el(side + "PickLabel").textContent = state[side].length ? "Add another" : "Choose file";
+  }
+
+  function previewRowsHtml(side, f) {
+    var h = '<div class="prow phead"><span>Date</span><span>Amount</span><span>CR</span><span>Description</span><span></span></div>';
+    f.txns.forEach(function (t, i) {
+      var a = "data-action=\"edit\" data-side=\"" + side + "\" data-id=\"" + f.id + "\" data-idx=\"" + i + "\" ";
+      h += '<div class="prow">' +
+        '<input type="date" ' + a + 'data-field="date" value="' + toInputDate(t.date) + '">' +
+        '<input type="number" step="0.01" ' + a + 'data-field="amount" value="' + (t.amount == null ? "" : Math.abs(t.amount)) + '">' +
+        '<input type="checkbox" ' + a + 'data-field="isCredit" ' + (t.isCredit ? "checked" : "") + '>' +
+        '<input type="text" ' + a + 'data-field="desc" value="' + escAttr(t.desc) + '">' +
+        '<button class="chip-x" data-action="delrow" data-side="' + side + '" data-id="' + f.id + '" data-idx="' + i + '">✕</button>' +
+        '</div>';
+    });
+    return h;
+  }
+
+  function renderPreviews() {
+    var box = el("previews"); box.innerHTML = "";
+    ["cc", "exp"].forEach(function (side) {
+      state[side].forEach(function (f) {
+        if (f.kind !== "pdf") return;
+        var det = document.createElement("details"); det.className = "preview";
+        var label = f.txns.length + " transaction" + (f.txns.length === 1 ? "" : "s") + " read from " + f.name + " — open to check or fix";
+        det.innerHTML = "<summary>" + escHtml(label) + "</summary><div class='ptable'>" + previewRowsHtml(side, f) +
+          "</div><button class='ghost small' data-action='addrow' data-side='" + side + "' data-id='" + f.id + "'>+ Add row</button>";
+        box.appendChild(det);
+      });
+    });
+  }
+
+  function renderMapping() {
+    var wrap = el("mapWrap");
+    var sides = [];
+    if (state.exp.some(function (f) { return f.kind === "sheet"; })) sides.push(["exp", "Expense files", state.expMap]);
+    if (state.cc.some(function (f) { return f.kind === "sheet"; })) sides.push(["cc", "Credit card file", state.ccMap]);
+    if (!sides.length) { wrap.innerHTML = ""; return; }
+    var body = "";
+    sides.forEach(function (s, i) {
+      var side = s[0], label = s[1], map = s[2]; if (!map) return;
+      if (i) body += "<div class='mapsep'></div>";
+      body += "<div class='maprow'><span class='mlabel'>" + label + "</span>";
+      ["date", "amount", "desc"].forEach(function (field) {
+        var opts = '<option value="">—</option>';
+        map.keys.forEach(function (key) { opts += '<option value="' + escAttr(key) + '"' + (map[field] === key ? " selected" : "") + ">" + escHtml(key) + "</option>"; });
+        body += "<label><div class='mfield'>" + (field === "desc" ? "description" : field) + "</div>" +
+          "<select data-action='map' data-side='" + side + "' data-field='" + field + "'>" + opts + "</select></label>";
+      });
+      body += "</div>";
+    });
+    wrap.innerHTML = "<details class='mapw'><summary>⚙ Columns detected automatically — open to adjust</summary><div class='mapbody'>" + body + "</div></details>";
+  }
+
+  function renderAll() { renderFileList("exp"); renderFileList("cc"); renderPreviews(); renderMapping(); updateRun(); }
+
+  /* ---------- rendering: results ---------- */
+  function sideHtml(label, t) {
+    return '<div class="side"><div class="slabel">' + label + '</div>' +
+      '<div class="sfig"><span class="fig">' + fmtNum(t.amount) + '</span><span class="sdate">' + fmtDate(t.date) + '</span></div>' +
+      '<div class="sdesc">' + (t.desc ? escHtml(t.desc) : '<span class="muted">no description</span>') + '</div>' +
+      (t.source ? '<div class="ssrc">' + escHtml(t.source) + '</div>' : '') + '</div>';
+  }
+  function pairHtml(rec) {
+    var review = rec.flags && rec.flags.length;
+    var tone = review ? "review" : "match", conn = review ? "≈" : "=";
+    var inner = sideHtml("Card charge", rec.cc) + '<span class="conn">' + conn + '</span>' + sideHtml("Expense entry", rec.exp) +
+      '<span class="badge ' + tone + '">' + (review ? "Review" : "Match") + "</span>";
+    if (!review) return '<div class="pair match"><div class="pairflat">' + inner + "</div></div>";
+    var detail = '<div class="pdetail">' + rec.flags.map(function (f) { return '<div class="dflag"><span>⚠</span><span>' + escHtml(f) + "</span></div>"; }).join("") +
+      '<div class="dnote">Double-check this one — it wasn’t an exact match.</div></div>';
+    return '<div class="pair review"><details><summary>' + inner + "</summary>" + detail + "</details></div>";
+  }
+  function singleHtml(t, tone, note) {
+    return '<div class="single ' + tone + '"><span class="dot"></span><div class="sbody">' +
+      '<div class="sfig"><span class="fig">' + fmtNum(t.amount) + '</span><span class="sdate">' + fmtDate(t.date) + '</span></div>' +
+      '<div class="sdesc">' + (t.desc ? escHtml(t.desc) : '<span class="muted">no description</span>') + '</div>' +
+      (t.source ? '<div class="ssrc">' + escHtml(t.source) + '</div>' : '') +
+      '</div><span class="badge ' + tone + '">' + note + "</span></div>";
+  }
+
+  function dateRange(arr) {
+    var ds = arr.map(function (t) { return t.date; }).filter(Boolean).sort(function (a, b) { return a - b; });
+    return ds.length ? fmtDate(ds[0]) + " – " + fmtDate(ds[ds.length - 1]) : "no dates";
+  }
+
+  function renderResults() {
+    var R = state.results; if (!R) return;
+    var gapCharges = R.unmatchedCC.filter(function (t) { return !t.isCredit; });
+    var gapCredits = R.unmatchedCC.filter(function (t) { return t.isCredit; });
+    var ccAll = R.matched.map(function (r) { return r.cc; }).concat(R.flagged.map(function (r) { return r.cc; }), R.unmatchedCC);
+    var exAll = R.matched.map(function (r) { return r.exp; }).concat(R.flagged.map(function (r) { return r.exp; }), R.unmatchedExp);
+    el("coverage").innerHTML = "<span><b>Bill:</b> " + dateRange(ccAll) + "</span><span><b>Expenses:</b> " + dateRange(exAll) + "</span>";
+
+    var tabs = [
+      ["gap", "Unaccounted", gapCharges.length, "var(--gapDot)"],
+      ["review", "Needs review", R.flagged.length, "var(--reviewDot)"],
+      ["match", "Matched", R.matched.length, "var(--matchDot)"],
+      ["exp", "Expenses only", R.unmatchedExp.length, "var(--expDot)"]
+    ];
+    el("stats").innerHTML = tabs.map(function (t) {
+      return "<button class='stat" + (state.filter === t[0] ? " on" : "") + "' data-action='filter' data-filter='" + t[0] + "'>" +
+        "<span class='slab'><span class='dot' style='background:" + t[3] + "'></span>" + t[1] + "</span>" +
+        "<span class='snum'>" + t[2] + "</span></button>";
+    }).join("");
+
+    var help = {
+      gap: "On the bill but with no matching expense entry — the ones worth checking.",
+      review: "Matches that needed a judgment call: a shifted date, a different amount, or a credit. Open any row to see the assumption.",
+      match: "Exact matches — same amount, same date.",
+      exp: "In your tracker but not on this bill — usually cash, another card, or a date outside the statement period."
+    }[state.filter];
+    el("help").textContent = help || "";
+
+    var list = el("list"), html = "";
+    if (state.filter === "gap") {
+      html += gapCharges.length ? gapCharges.sort(byDate).map(function (t) { return singleHtml(t, "gap", "Not accounted for"); }).join("") :
+        emptyHtml("Every charge on the bill is accounted for.");
+      if (gapCredits.length) {
+        html += "<div class='subhead'>Credits on this bill (CR) — money back, not charges</div>";
+        html += gapCredits.sort(byDate).map(function (t) { return singleHtml(t, "credit", "Credit (CR)"); }).join("");
+      }
+    } else if (state.filter === "review") {
+      html = R.flagged.length ? R.flagged.map(pairHtml).join("") : emptyHtml("Nothing needed a judgment call — all matches were exact.");
+    } else if (state.filter === "match") {
+      html = R.matched.length ? R.matched.map(pairHtml).join("") : emptyHtml("No exact matches yet.");
+    } else {
+      html = R.unmatchedExp.length ? R.unmatchedExp.sort(byDate).map(function (t) { return singleHtml(t, "exp", "No charge found"); }).join("") :
+        emptyHtml("Every expense entry maps to a charge.");
+    }
+    list.innerHTML = html;
+    el("results").classList.remove("hidden");
+  }
+  function byDate(a, b) { return (b.date || 0) - (a.date || 0); }
+  function emptyHtml(text) { return '<div class="single exp" style="justify-content:center"><span class="muted">' + escHtml(text) + "</span></div>"; }
+
+  function run() {
+    hideError();
+    var exp = collectTxns("exp"), cc = collectTxns("cc");
+    if (!cc.length) { showError("No usable rows in the credit card bill. Open the Columns panel to check the mapping."); return; }
+    if (!exp.length) { showError("No usable rows in the expense files. Open the Columns panel to check the mapping."); return; }
+    state.results = reconcile(cc, exp);
+    state.filter = state.results.unmatchedCC.filter(function (t) { return !t.isCredit; }).length ? "gap" : "match";
+    renderResults();
+    el("results").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function exportCsv() {
+    if (!state.results) return;
+    var csv = buildCsv(state.results);
+    var url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    var a = document.createElement("a"); a.href = url; a.download = "reconciliation.csv"; document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
+
+  /* ---------- events ---------- */
+  function onFieldChange(e) {
+    var t = e.target; if (!t || !t.getAttribute) return;
+    var action = t.getAttribute("data-action");
+    if (action === "edit") {
+      var f = findFile(t.getAttribute("data-side"), t.getAttribute("data-id")); if (!f) return;
+      var row = f.txns[+t.getAttribute("data-idx")]; if (!row) return;
+      var field = t.getAttribute("data-field");
+      if (field === "date") row.date = fromInputDate(t.value);
+      else if (field === "amount") { var v = parseFloat(t.value); row.amount = isNaN(v) ? null : (row.isCredit ? -Math.abs(v) : Math.abs(v)); }
+      else if (field === "isCredit") { row.isCredit = t.checked; if (row.amount != null) row.amount = t.checked ? -Math.abs(row.amount) : Math.abs(row.amount); }
+      else if (field === "desc") row.desc = t.value;
+      state.results = null; hideResults();
+    } else if (action === "map") {
+      var key = t.getAttribute("data-side") === "exp" ? "expMap" : "ccMap";
+      if (state[key]) { state[key][t.getAttribute("data-field")] = t.value; state.results = null; hideResults(); }
+    }
+  }
+
+  function onClick(e) {
+    var t = e.target.closest ? e.target.closest("[data-action]") : null; if (!t) return;
+    var action = t.getAttribute("data-action"), side = t.getAttribute("data-side"), id = t.getAttribute("data-id");
+    if (action === "remove") { state[side] = state[side].filter(function (f) { return f.id !== id; }); recomputeMap(side); state.results = null; hideResults(); renderAll(); }
+    else if (action === "delrow") { var f = findFile(side, id); if (f) f.txns.splice(+t.getAttribute("data-idx"), 1); state.results = null; hideResults(); renderPreviews(); renderFileList(side); }
+    else if (action === "addrow") { e.preventDefault(); var f2 = findFile(side, id); if (f2) f2.txns.push({ date: null, amount: null, isCredit: false, desc: "", source: f2.name }); state.results = null; hideResults(); renderPreviews(); renderFileList(side); }
+    else if (action === "filter") { state.filter = t.getAttribute("data-filter"); renderResults(); }
+  }
+
+  function wireDrop(side) {
+    var zone = el(side + "Drop");
+    zone.addEventListener("dragover", function (e) { e.preventDefault(); zone.classList.add("dragover"); });
+    zone.addEventListener("dragleave", function () { zone.classList.remove("dragover"); });
+    zone.addEventListener("drop", function (e) { e.preventDefault(); zone.classList.remove("dragover"); handleFiles(e.dataTransfer.files, side); });
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    el("expPick").addEventListener("click", function () { el("expInput").click(); });
+    el("ccPick").addEventListener("click", function () { el("ccInput").click(); });
+    el("expInput").addEventListener("change", function () { handleFiles(this.files, "exp"); this.value = ""; });
+    el("ccInput").addEventListener("change", function () { handleFiles(this.files, "cc"); this.value = ""; });
+    el("runBtn").addEventListener("click", run);
+    el("exportBtn").addEventListener("click", exportCsv);
+    document.addEventListener("input", onFieldChange);
+    document.addEventListener("change", onFieldChange);
+    document.addEventListener("click", onClick);
+    wireDrop("exp"); wireDrop("cc");
+  });
+})();
+
+</script>
+</body>
+</html>
