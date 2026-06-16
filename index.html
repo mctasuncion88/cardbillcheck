@@ -253,15 +253,15 @@ function tokenSim(a, b) {
 function detectColumns(rows) {
   if (!rows.length) return { date: "", amount: "", desc: "", keys: [] };
   var keys = Object.keys(rows[0]).filter(function (k) { return k !== "__src"; });
-  var sample = rows.slice(0, 40);
+  var sample = rows.slice(0, 60);
   var h = function (k) { return k.toLowerCase(); };
   var frac = function (k, test) { var c = 0; sample.forEach(function (r) { if (test(r[k])) c++; }); return c / Math.max(1, sample.length); };
-  var dateF = {}, amtF = {}, txtLen = {};
+
+  /* --- date and amount scoring (unchanged) --- */
+  var dateF = {}, amtF = {};
   keys.forEach(function (k) {
     dateF[k] = frac(k, function (v) { return parseDate(v) != null; });
     amtF[k] = frac(k, function (v) { return parseAmountInfo(v).value != null && parseDate(v) == null; });
-    var lens = []; sample.forEach(function (r) { var s = String(r[k] == null ? "" : r[k]); if (/[a-z]/i.test(s)) lens.push(s.length); });
-    txtLen[k] = lens.length ? lens.reduce(function (a, b) { return a + b; }, 0) / lens.length : 0;
   });
   var pick = function (scoreObj, words, min) {
     var named = null;
@@ -271,12 +271,47 @@ function detectColumns(rows) {
     keys.forEach(function (k) { if (scoreObj[k] > bestS) { bestS = scoreObj[k]; best = k; } });
     return best;
   };
-  var date = pick(dateF, ["date", "time", "posted"], 0.5);
+  var date = pick(dateF, ["date", "time", "posted", "period"], 0.5);
   var amtKeys = {}; keys.forEach(function (k) { if (k !== date) amtKeys[k] = amtF[k]; });
-  var amount = pick(amtKeys, ["amount", "amt", "price", "cost", "debit", "total", "value", "charge", "spent"], 0.5);
-  var desc = null;
-  keys.forEach(function (k) { if (!desc && ["desc", "note", "detail", "merchant", "name", "payee", "memo", "particular", "narrative", "transaction", "reference", "category"].some(function (w) { return h(k).indexOf(w) >= 0; })) desc = k; });
-  if (!desc) { var bL = 0; keys.forEach(function (k) { if (k !== date && k !== amount && txtLen[k] > bL) { bL = txtLen[k]; desc = k; } }); }
+  var amount = pick(amtKeys, ["sgd", "amount", "amt", "price", "cost", "debit", "total", "value", "charge", "spent"], 0.5);
+
+  /* --- description: score each column for "merchant name" quality --- */
+  // A good merchant column has: varied values, latin text, non-numeric, not a small fixed set
+  var descScore = {};
+  keys.forEach(function (k) {
+    if (k === date || k === amount) { descScore[k] = -99; return; }
+    var vals = [], unique = {};
+    sample.forEach(function (r) {
+      var v = String(r[k] == null ? "" : r[k]).trim();
+      if (v) { vals.push(v); unique[v.toLowerCase()] = 1; }
+    });
+    if (!vals.length) { descScore[k] = -99; return; }
+    var score = 0;
+    // fraction of cells that have latin text (a–z) — rules out numeric/empty columns
+    var latinFrac = vals.filter(function (v) { return /[a-zA-Z]/.test(v); }).length / vals.length;
+    score += latinFrac * 30;
+    // fraction of cells that are NOT purely numeric
+    var notNumFrac = vals.filter(function (v) { return isNaN(parseFloat(v.replace(/,/g,""))) || /[a-zA-Z]/.test(v); }).length / vals.length;
+    score += notNumFrac * 20;
+    // variety: unique values / total values — a category column has low variety ("Meal","Card")
+    var variety = Object.keys(unique).length / vals.length;
+    score += variety * 40;
+    // average length: merchant names are 3–40 chars; very short = category, very long = notes/remarks
+    var avgLen = vals.reduce(function (s, v) { return s + v.length; }, 0) / vals.length;
+    if (avgLen >= 3 && avgLen <= 40) score += 15;
+    else if (avgLen > 40) score += 5; // long but possible
+    // penalise columns that look like fixed categories (≤5 distinct values across 20+ rows)
+    if (vals.length >= 20 && Object.keys(unique).length <= 5) score -= 25;
+    // penalise columns whose name suggests they're not a description
+    var hk = h(k);
+    if (["type","group","category","cate","remarks","remark","currency","curr","rate","mth","month","year","week","income","expense","subcategory"].some(function (w) { return hk === w || hk === w+"s"; })) score -= 30;
+    // boost columns whose name suggests description
+    if (["note","detail","merchant","name","payee","memo","particular","narrative","place","description","desc"].some(function (w) { return hk.indexOf(w) >= 0; })) score += 25;
+    descScore[k] = score;
+  });
+  var desc = null, bestDS = -Infinity;
+  keys.forEach(function (k) { if (descScore[k] > bestDS) { bestDS = descScore[k]; desc = k; } });
+
   return { date: date, amount: amount, desc: desc || "", keys: keys };
 }
 
